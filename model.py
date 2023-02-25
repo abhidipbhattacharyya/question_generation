@@ -24,8 +24,8 @@ def save_checkpoint(model, tokenizer, args, epoch, iteration, num_trial=10):
         logger.info("Failed to save checkpoint after {} trails.".format(num_trial))
     return checkpoint_dir
 
-def load_checkpoint(args, logger=None):
-    checkpoint = args.eval_model_dir
+def load_checkpoint(checkpoint, args, logger=None):
+    #checkpoint = args.eval_model_dir
     assert op.isdir(checkpoint)
         #config = config_class.from_pretrained(checkpoint)
         #config.output_hidden_states = args.output_hidden_states
@@ -40,13 +40,8 @@ class BART_QG(nn.Module):
         self.bart =  BartForConditionalGeneration.from_pretrained(config)
 
 
-    def forward(self, batch):
-        encoder_ids= batch.encoder_ids
-        encoder_attention_masks= batch.encoder_attention_masks
-        decoder_ids=batch.decoder_ids
-        target_ids=batch.target_ids
-
-        output = self.bart(input_ids=encoder_ids, attention_mask=encoder_attention_masks, decoder_input_ids=batch.decoder_ids, labels=batch.target_ids)
+    def forward(self, input_ids,attention_mask=None,decoder_input_ids=None, labels=None):
+        output = self.bart(input_ids=input_ids, attention_mask=attention_mask, decoder_input_ids=decoder_input_ids, labels=labels)
         return output
 
     def generate(self, batch, num_beams=5, do_sample=True):

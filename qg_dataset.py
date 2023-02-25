@@ -16,7 +16,7 @@ train_path = data_dir + 'train_split.csv'
 val_path = data_dir + 'val_split.csv'
 test_path = data_dir + 'test_split.csv'
 
-''' i will write some functions. That will eventually go to helper.py'''
+''' i will write some functions. That will eventually go to preprocessing.py'''
 # Remove blank space characters from the source texts
 def clean_source_text(raw_text):
     clean_text = raw_text.replace('\n',' ').replace('\r',' ').replace('\t',' ').replace('\s',' ').replace('\t+',' ').replace('\s+',' ').lower().strip(' .') + ' .'
@@ -46,14 +46,16 @@ def extract_section_text_for_row(fairytale_row):
     fairytale_row['section_text'] = clean_source_text(section_text)
     return fairytale_row
 
-'''encoder text. It will have the story piece and the task desc'''
+
 def format_encoder_text_for_bart(example, task = "ask_question"):
+    '''encoder text. It will have the story piece and the task desc.'''
     input_text = "{}: context: {}".format(task, example["section_text"])
     example["input_text"] = input_text
     return example
 
-'''decoder text. it will have attribute and question or answer'''
+
 def format_decoder_text_for_bart(example, task = "ask_question"):
+    '''decoder text. it will have attribute and question or answer.'''
     if 'attribute1' in example:
         attribute = example['attribute1']
     else:
@@ -69,6 +71,7 @@ def format_decoder_text_for_bart(example, task = "ask_question"):
     return example
 
 def format_output_text_for_bart(example, task = "ask_question"):
+    '''creating the target.'''
     if task == "ask_question":
         example["output_text"] = example["question"]
     elif task == "ask_answer":
@@ -77,7 +80,6 @@ def format_output_text_for_bart(example, task = "ask_question"):
         example["output_text"] =  example["question"]+" "+example["answer"]
 
     return example
-
 
 
 batch_fields = [
@@ -180,10 +182,18 @@ class fairytale_dataset(Dataset):
             )
 
 
+def build_dataset(args,  tokenizer, is_train=True):
+    dataset = fairytale_dataset(args.csv_file,
+                tokenizer=tokenizer,
+                istraining=is_train,
+                max_encoder_input_length = args.max_encoder_input_length,
+                max_decoder_input_length = args.max_decoder_input_length,
+                max_target_length = args.max_target_length)
+    return dataset
 
 if __name__ == '__main__':
     tokenizer = BartTokenizer.from_pretrained("facebook/bart-base")
-    dataset = fairytale_dataset('small_example.csv', tokenizer=tokenizer)
+    dataset = fairytale_dataset(args.csv_file', tokenizer=tokenizer, max_encoder_input_length = 1024, max_decoder_input_length = 128, max_target_length = 128, story_file=None, task = "ask_question")
     loader = DataLoader(
         dataset, batch_size=2,
         collate_fn=dataset.collate_fn,

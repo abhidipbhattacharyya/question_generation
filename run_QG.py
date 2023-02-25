@@ -9,10 +9,11 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import Dataset
 from tqdm import tqdm
-from transformers import AdamW, get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
+from transformers import AdamW, get_linear_schedule_with_warmup, get_constant_schedule_with_warmup, BartConfig
 import tensorboard_logger as tb_logger
 import logging
 from utils import LogCollector
+from qg_dataset import build_dataset
 
 def get_world_size():
     if not dist.is_available():
@@ -71,8 +72,7 @@ def make_data_sampler(dataset, shuffle, distributed):
     return sampler
 
 
-def make_data_loader(args, csv_file, tokenizer, is_distributed=True,
-        is_train=True):
+def make_data_loader(args, csv_file, tokenizer, is_distributed=True,is_train=True):
     dataset = build_dataset(args,  tokenizer, is_train=is_train)
     if is_train:
         shuffle = True
@@ -142,7 +142,39 @@ def train(args, train_dataloader, model, tokenizer):
             encoder_attention_masks=batch.encoder_attention_masks.to(args.device)
             decoder_ids=batch.decoder_ids.to(args.device)
             target_ids=batch.target_ids.to(args.device)
-            
+            model.train()
+
+            outputs = model(input_ids=encoder_ids,
+                attention_mask=encoder_attention_masks,
+                decoder_input_ids=decoder_ids,
+                labels=target_ids
+            )
+            if args.gradient_accumulation_steps > 1:
+                loss = loss / args.gradient_accumulation_steps
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            global_loss += loss.item()
+            if (step + 1) % args.gradient_accumulation_steps == 0:
+                global_step += 1
+                scheduler.step()
+                optimizer.step()
+                model.zero_grad()
+                if global_step % args.logging_steps == 0:
+                    logging.info("Epoch: {}, global_step: {}, lr: {:.6f}, loss: {:.4f} ({:.4f}), " \
+                        "score: {:.4f} ({:.4f})".format(epoch, global_step,
+                        optimizer.param_groups[0]["lr"], loss, global_loss / global_step,
+                        batch_acc, global_acc / global_step)
+                    )
+
+                if (args.save_steps > 0 and global_step % args.save_steps == 0) or \
+                        global_step == t_total:
+                    checkpoint_dir = save_checkpoint(model, tokenizer, args, epoch, global_step)
+                    logging.info("model saved at {}".format(checkpoint_dir))
+
+    return checkpoint_dir
+
+
+
 
 
 def main():
@@ -151,11 +183,9 @@ def main():
     parser.add_argument('--csv_file', default='/media/abhidip/2F1499756FA9B1151/data/flickr/entity/flickr30k_entities-master/',
                         help='path to datasets')
 
-
-    parser.add_argument('--starting_path', default='/media/abhidip/2F1499756FA9B1151/SCAN_models/GOT/bert-base-uncase',
+    parser.add_argument('--model_name_or_path', default='/media/abhidip/2F1499756FA9B1151/SCAN_models/GOT/bert-base-uncase',
                         help='Path to bert base.')
-    parser.add_argument('--sen_index', default=-1, type=float,
-                        help='index of the sentence to use.')
+
     parser.add_argument("--do_train", action='store_true', help="Whether to run training.")
     parser.add_argument("--do_test", action='store_true', help="Whether to run inference.")
     parser.add_argument("--do_eval", action='store_true', help="Whether to run evaluation.")
@@ -187,9 +217,11 @@ def main():
     parser.add_argument('--output_dir', default='/media/abhidip/2F1499756FA9B1151/SCAN_models/GOT/',
                         help='Path to save the model.')
     parser.add_argument('--logger_name', default='/media/abhidip/2F1499756FA9B1151/SCAN_models/GOT/log', help='Path to save Tensorboard log.')
-    parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                        help='path to latest checkpoint (default: none)')
+    parser.add_argument('--resume', default='', type=str, metavar='PATH',help='path to latest checkpoint (default: none)')
 
+    parser.add_argument('--logging_steps', type=int, default=20, help="Log every X steps.")
+    parser.add_argument('--save_steps', type=int, default=-1,
+                        help="Save checkpoint every X steps. Will also perform evaluation.")
     parser.add_argument("--local_rank", type=int, default=0,
                         help="For distributed training.")
 
@@ -209,3 +241,19 @@ def main():
     args.num_gpus = get_world_size()
     args.distributed = args.num_gpus > 1
     args.device = torch.device('cuda')
+    synchronize()
+
+    set_seed(args.seed, args.num_gpus)
+
+    checkpoint = args.model_name_or_path
+    #config = BartConfig.from_pretrained(checkpoint)
+    tokenizer = BartTokenizer.from_pretrained(checkpoint)
+    logger.info("Evaluate the following checkpoint: %s", checkpoint)
+    model = load_checkpoint(checkpoint, args)#checkpoint, config=config)
+    model.to(args.device)
+
+    if args.do_train:
+        train_dataloader = make_data_loader(args, args.csv_file, tokenizer,
+            args.distributed, is_train=True)
+        last_checkpoint = train(args, train_dataloader, model, tokenizer)
+        print("training done. Last chkpt {}".format(last_checkpoint))
