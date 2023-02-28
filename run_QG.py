@@ -15,7 +15,7 @@ import logging
 from utils import LogCollector
 from qg_dataset import build_dataset
 from model import  BART_QG
-from utils import mkdir
+from utils import mkdir, csv_writer, concat_csv_files, delete_csv_files, reorder_csv_keys
 
 def get_world_size():
     if not dist.is_available():
@@ -75,7 +75,7 @@ def make_data_sampler(dataset, shuffle, distributed):
 
 
 def make_data_loader(args, csv_file, tokenizer, is_distributed=True,is_train=True):
-    dataset = build_dataset(args,  tokenizer, is_train=is_train)
+    dataset = build_dataset(args,  tokenizer, is_train=True)
     if is_train:
         shuffle = True
         images_per_gpu = args.batch_size
@@ -218,6 +218,46 @@ def set_seed(seed, n_gpu):
     if n_gpu > 0:
         torch.cuda.manual_seed_all(seed)
 
+def generate_output_sequences_for_comp_data(model, data_loader, predict_file, tokenizer,args = None, with_attribute=False):
+    if not (args.do_test or args.do_eval):
+        return output_file
+
+    world_size = get_world_size()
+    if world_size == 1:
+        cache_file = predict_file
+    else:
+        cache_file = op.splitext(predict_file)[0] + '_{}_{}'.format(get_rank(),
+                world_size) + op.splitext(predict_file)[1]
+
+    model.eval()
+    def gen_rows():
+        with torch.no_grad():
+            for bstep, batch in enumerate(data_loader):
+                #print(batch)
+                pair_ids = batch.pair_ids
+                encoder_ids= batch.encoder_ids.to(args.device)
+                encoder_attention_masks=batch.encoder_attention_masks.to(args.device)
+                decoder_ids=batch.decoder_ids.to(args.device)
+                target_ids=batch.target_ids.to(args.device)
+                encoded_op = model.generate(encoder_ids,attention_mask=encoder_attention_masks,decoder_input_ids=decoder_ids)
+                decoded_outputs = tokenizer.batch_decode(encoded_op, skip_special_tokens=True)
+
+                for pair_id, dec_op in zip(pair_ids, decoded_outputs):
+                    if isinstance(pair_id, torch.Tensor):
+                        pair_id = pair_id.item()
+                    yield pair_id,dec_op
+    csv_writer(gen_rows(), cache_file)
+    if world_size > 1:
+        torch.distributed.barrier()
+    if world_size > 1 and is_main_process():
+        cache_files = [op.splitext(predict_file)[0] + '_{}_{}'.format(i, world_size) + \
+            op.splitext(predict_file)[1] for i in range(world_size)]
+        concat_csv_files(cache_files, predict_file)
+        delete_csv_files(cache_files)
+        reorder_csv_keys(predict_file, data_loader.dataset.pair_ids, predict_file)
+        print("op is at {}".format(predict_file))
+    if world_size > 1:
+        torch.distributed.barrier()
 
 def main():
     # Hyper Parameters
@@ -269,13 +309,15 @@ def main():
 
     parser.add_argument("--max_encoder_input_length", default=1024, type=int,
                         help="The maximum sequence length for encoder.")
-    parser.add_argument("--max_decoder_input_length", default=128, type=int,
+    parser.add_argument("--max_decoder_input_length", default=64, type=int,
                         help="The maximum sequence length for decoder.")
-    parser.add_argument("--max_target_length", default=128, type=int,
+    parser.add_argument("--max_target_length", default=64, type=int,
                         help="The maximum sequence length for generation.")
     parser.add_argument('--seed', type=int, default=88, help="random seed for initialization.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     parser.add_argument('--task', default="ask_question",help='ask_question|ask_answer|both')
+    parser.add_argument('--predict_file', default='/media/abhidip/2F1499756FA9B1151/QG/model/predict.csv',
+                        help='Path to save the generated op.')
 
     args = parser.parse_args()
     local_rank = ensure_init_process_group(local_rank=args.local_rank)
@@ -314,6 +356,10 @@ def main():
         last_checkpoint = train(args, train_dataloader, model, tokenizer)
         print("training done. Last chkpt {}".format(last_checkpoint))
 
+    elif args.do_test:
+        test_dataloader = make_data_loader(args, args.csv_file, tokenizer,
+            args.distributed, is_train=False)
+        generate_output_sequences_for_comp_data(model, test_dataloader, args.predict_file, tokenizer, args = args)
 
 if __name__ == "__main__":
     main()

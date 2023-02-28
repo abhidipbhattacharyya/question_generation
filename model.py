@@ -17,20 +17,21 @@ class BART_QG(nn.Module):
         output = self.bart(input_ids=input_ids, attention_mask=attention_mask, decoder_input_ids=decoder_input_ids, labels=labels)
         return output
 
-    def generate(self, batch, num_beams=5, do_sample=True):
+    def generate(self, input_ids,attention_mask=None,decoder_input_ids=None, num_beams=2, do_sample=True):
         "encoder_outputs"
-        encoder_ids= batch.encoder_ids
-        encoder_attention_masks= batch.encoder_attention_masks
-        decoder_ids=batch.decoder_ids
-
+        encoder_ids= input_ids
+        encoder_attention_masks= attention_mask
+        decoder_ids=decoder_input_ids
+        print(encoder_ids.size())
+        print(decoder_ids.size())
         model_kwargs = {
-            "encoder_outputs": model.get_encoder()(
-                encoder_input_ids.repeat_interleave(num_beams, dim=0), return_dict=True
+            "encoder_outputs": self.bart.get_encoder()(
+                encoder_ids, attention_mask=encoder_attention_masks, return_dict=True
                 ),
             "decoder_input_ids":decoder_ids,
             "attention_mask":encoder_attention_masks,
-
+            "max_length":128,
         }
 
-        encoded_ids = self.bart_QG.generate(num_beams=num_beams, do_sample=do_sample, **model_kwargs)
+        encoded_ids = self.bart.generate(num_beams=num_beams, do_sample=do_sample, **model_kwargs)
         return encoded_ids

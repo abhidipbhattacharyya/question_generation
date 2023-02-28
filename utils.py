@@ -1,5 +1,7 @@
 import os
 import os.path as op
+import errno
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
@@ -67,3 +69,46 @@ def mkdir(path):
     except OSError as e:
         if e.errno != errno.EEXIST:
             raise
+
+def csv_writer(values, csv_file_name, sep=','):
+    mkdir(os.path.dirname(csv_file_name))
+    csv_file_name_tmp = csv_file_name + '.tmp'
+    with open(csv_file_name_tmp, 'wb') as fp:
+        assert values is not None
+        for value in values:
+            assert value is not None
+            v = sep.join(map(lambda v: v.decode() if type(v) == bytes else str(v), value)) + '\n'
+            v = v.encode()
+            fp.write(v)
+    os.rename(csv_file_name_tmp, csv_file_name)
+
+
+def concat_csv_files(cache_files, predict_file):
+    all_lines = []
+    with open(predict_file,'w') as fout:
+        for cf in cache_files:
+            with open(cf,'r') as fin:
+                lines = fin.readlines()
+                for l in lines:
+                    fout.write(l.strip()+"\n")
+
+
+def delete_csv_files(csvs):
+    for c in csvs:
+        if op.isfile(c):
+            os.remove(c)
+
+def reorder_csv_keys(i_file, pair_ids, o_file):
+    with open(i_file, "r") as f:
+        lines = f.readlines()
+
+    line_dic = {}
+    for l in lines:
+        linfo = l.strip().split(",")
+        p_id = linfo[0]
+        #op = l.strip()
+        line_dic[p_id] = l.strip()
+
+    with open(o_file, "w") as f:
+        for pid in pair_ids:
+            f.write(line_dic[pid]+"\n")

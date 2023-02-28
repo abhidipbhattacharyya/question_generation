@@ -83,6 +83,7 @@ def format_output_text_for_bart(example, task = "ask_question"):
 
 
 batch_fields = [
+    'pair_ids',
     'encoder_ids',
     'encoder_attention_masks',
     'decoder_ids',
@@ -104,7 +105,7 @@ class QGTensorizer(object):
         de_ids = self.tokenizer(de_txt,  return_tensors='pt',max_length= self.max_decoder_input_length, truncation=True, pad_to_max_length=True)
         tar_ids = None
         if tar_txt:
-            tar_ids = self.tokenizer(tar_txt,  return_tensors='pt',max_length= self.max_decoder_input_length, truncation=True, pad_to_max_length=True)
+            tar_ids = self.tokenizer(tar_txt,  return_tensors='pt',max_length= self.max_target_length, truncation=True, pad_to_max_length=True)
 
         return en_ids, de_ids, tar_ids
 
@@ -131,13 +132,16 @@ class fairytale_dataset(Dataset):
     def __len__(self):
         return len(self.rw_data)
 
+    @property
+    def pair_ids(self):
+        return [data_item['pair_id'] for data_item in self.rw_data]
     def __getitem__(self, item):
         data_item = self.rw_data[item]
         if self.istraining:
             tar_txt = data_item["output_text"]
         else:
             tar_txt = None
-
+        #print(data_item)
         #print([data_item["input_text"],data_item['decoder_text'], tar_txt])
         en_ids, de_ids, tar_ids=self.tensorizer.tensorize_example(data_item["input_text"],data_item['decoder_text'], tar_txt = tar_txt)
         encoder_id = en_ids['input_ids'].squeeze(0)
@@ -148,7 +152,9 @@ class fairytale_dataset(Dataset):
             target_id = tar_ids['input_ids'].squeeze(0)
         else:
             target_id = None
-        eitem = {'encoder_id':encoder_id,
+
+        eitem = {'pair_id':data_item['pair_id'],
+                'encoder_id':encoder_id,
                 'encoder_attention_mask':encoder_att,
                 'decoder_id':decoder_id,
                 #'decoder_attention_mask':None,#think about it
@@ -161,10 +167,12 @@ class fairytale_dataset(Dataset):
         encoder_attention_masks = []
         decoder_ids = []
         target_ids = []
+        pair_ids = []
         if self.istraining:
             target_ids = []
 
         for b in batch:
+            pair_ids.append(b['pair_id'])
             encoder_ids.append(b['encoder_id'])
             encoder_attention_masks.append(b['encoder_attention_mask'])
             decoder_ids.append(b['decoder_id'])
@@ -179,6 +187,7 @@ class fairytale_dataset(Dataset):
             target_ids = torch.stack(target_ids, dim=0)
 
         return Batch(
+                pair_ids = pair_ids,
                 encoder_ids= encoder_ids,
                 encoder_attention_masks=encoder_attention_masks,
                 decoder_ids=decoder_ids,
@@ -217,6 +226,7 @@ if __name__ == '__main__':
         encoder_attention_masks=batch.encoder_attention_masks
         decoder_ids=batch.decoder_ids
         target_ids=batch.target_ids
+        print(batch.pair_ids)
         print(encoder_ids.size())
         print(encoder_attention_masks.size())
         print(decoder_ids.size())
