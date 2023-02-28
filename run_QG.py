@@ -14,6 +14,8 @@ import tensorboard_logger as tb_logger
 import logging
 from utils import LogCollector
 from qg_dataset import build_dataset
+from model import  BART_QG
+from utils import mkdir
 
 def get_world_size():
     if not dist.is_available():
@@ -79,7 +81,7 @@ def make_data_loader(args, csv_file, tokenizer, is_distributed=True,is_train=Tru
         images_per_gpu = args.batch_size
         images_per_batch = images_per_gpu * get_world_size()
         iters_per_batch = len(dataset) // images_per_batch
-        num_iters = iters_per_batch * args.num_epochs
+        num_iters = iters_per_batch * args.num_train_epochs
         #logger.info("Train with {} images per GPU.".format(images_per_gpu))
         #logger.info("Total batch size {}".format(images_per_batch))
         #logger.info("Total training steps {}".format(num_iters))
@@ -92,8 +94,40 @@ def make_data_loader(args, csv_file, tokenizer, is_distributed=True,is_train=Tru
         dataset, num_workers=args.num_workers, sampler=sampler,
         batch_size=images_per_gpu,
         pin_memory=True,
+        collate_fn=dataset.collate_fn,
     )
     return data_loader
+
+def save_checkpoint(model, tokenizer, args, epoch, iteration, num_trial=10):
+    checkpoint_dir = op.join(args.output_dir, 'checkpoint-{}-{}'.format(
+        epoch, iteration))
+    if not is_main_process():
+        return checkpoint_dir
+    mkdir(checkpoint_dir)
+    model_to_save = model.module if hasattr(model, 'module') else model
+    bart = model_to_save.bart
+    for i in range(num_trial):
+        try:
+            bart.save_pretrained(checkpoint_dir)
+            torch.save(args, op.join(checkpoint_dir, 'training_args.bin'))
+            tokenizer.save_pretrained(checkpoint_dir)
+            logging.info("Save checkpoint to {}".format(checkpoint_dir))
+            break
+        except:
+            pass
+    else:
+        logging.info("Failed to save checkpoint after {} trails.".format(num_trial))
+    return checkpoint_dir
+
+def load_checkpoint(checkpoint, args, logger=None):
+    #checkpoint = args.eval_model_dir
+    assert op.isdir(checkpoint)
+        #config = config_class.from_pretrained(checkpoint)
+        #config.output_hidden_states = args.output_hidden_states
+        #self.tokenizer = BertTokenizer.from_pretrained(checkpoint)
+        #logger.info("Evaluate the following checkpoint: %s", checkpoint)
+    bart_QG = BART_QG(checkpoint, args)
+    return bart_QG
 
 def train(args, train_dataloader, model, tokenizer):
     if args.distributed:
@@ -116,19 +150,19 @@ def train(args, train_dataloader, model, tokenizer):
     ]
     optimizer = AdamW(grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     if args.scheduler == "constant":
-        scheduler = WarmupConstantSchedule(
+        scheduler = get_constant_schedule_with_warmup(
                 optimizer, warmup_steps=args.warmup_steps)
     elif args.scheduler == "linear":
-        scheduler = WarmupLinearSchedule(
-                optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
+        scheduler = get_linear_schedule_with_warmup(
+                optimizer, num_warmup_steps=args.warmup_steps, num_training_steps =t_total)
     else:
         raise ValueError("Unknown scheduler type: {}".format(args.scheduler))
 
     logging.info("***** Running training *****")
     logging.info("  Num Epochs = %d", args.num_train_epochs)
-    logging.info("  Batch size per GPU = %d", args.per_gpu_train_batch_size)
+    logging.info("  Batch size per GPU = %d", args.batch_size)
     logging.info("  Total train batch size (w. parallel, & accumulation) = %d",
-                   args.per_gpu_train_batch_size * get_world_size() * args.gradient_accumulation_steps)
+                   args.batch_size * get_world_size() * args.gradient_accumulation_steps)
     logging.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logging.info("  Total optimization steps = %d", t_total)
 
@@ -137,7 +171,8 @@ def train(args, train_dataloader, model, tokenizer):
     eval_log = []
     best_score = 0
     for epoch in range(int(args.num_train_epochs)):
-        for step, batch in enumerate(train_dataloader):
+        for bstep, batch in enumerate(train_dataloader):
+            #print(batch)
             encoder_ids= batch.encoder_ids.to(args.device)
             encoder_attention_masks=batch.encoder_attention_masks.to(args.device)
             decoder_ids=batch.decoder_ids.to(args.device)
@@ -149,23 +184,26 @@ def train(args, train_dataloader, model, tokenizer):
                 decoder_input_ids=decoder_ids,
                 labels=target_ids
             )
+            loss, logits = outputs[:2]
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             global_loss += loss.item()
-            if (step + 1) % args.gradient_accumulation_steps == 0:
+            if (bstep + 1) % args.gradient_accumulation_steps == 0:
                 global_step += 1
                 scheduler.step()
                 optimizer.step()
                 model.zero_grad()
                 if global_step % args.logging_steps == 0:
-                    logging.info("Epoch: {}, global_step: {}, lr: {:.6f}, loss: {:.4f} ({:.4f}), " \
-                        "score: {:.4f} ({:.4f})".format(epoch, global_step,
-                        optimizer.param_groups[0]["lr"], loss, global_loss / global_step,
-                        batch_acc, global_acc / global_step)
+                    logging.info("Epoch: {}, global_step: {}, lr: {:.6f}, loss: {:.4f} ({:.4f})".format(epoch, global_step,
+                        optimizer.param_groups[0]["lr"], loss, global_loss / global_step)
                     )
-
+                    if is_main_process():
+                        tb_logger.log_value('epoch',epoch,step=global_step)
+                        tb_logger.log_value('Eiter',global_step,step=global_step)
+                        tb_logger.log_value('lr',optimizer.param_groups[0]["lr"],step=global_step)
+                        tb_logger.log_value('loss_Avg',global_loss / global_step,step=global_step)
                 if (args.save_steps > 0 and global_step % args.save_steps == 0) or \
                         global_step == t_total:
                     checkpoint_dir = save_checkpoint(model, tokenizer, args, epoch, global_step)
@@ -173,17 +211,21 @@ def train(args, train_dataloader, model, tokenizer):
 
     return checkpoint_dir
 
-
-
+def set_seed(seed, n_gpu):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if n_gpu > 0:
+        torch.cuda.manual_seed_all(seed)
 
 
 def main():
     # Hyper Parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument('--csv_file', default='/media/abhidip/2F1499756FA9B1151/data/flickr/entity/flickr30k_entities-master/',
+    parser.add_argument('--csv_file', default='/media/abhidip/2F1499756FA9B1151/data/CU-stroy-QA-Data/train_split.csv',
                         help='path to datasets')
 
-    parser.add_argument('--model_name_or_path', default='/media/abhidip/2F1499756FA9B1151/SCAN_models/GOT/bert-base-uncase',
+    parser.add_argument('--model_name_or_path', default='/media/abhidip/2F1499756FA9B1151/QG/model/bart-base/',
                         help='Path to bert base.')
 
     parser.add_argument("--do_train", action='store_true', help="Whether to run training.")
@@ -192,9 +234,9 @@ def main():
 
     parser.add_argument('--margin', default=0.2, type=float,
                         help='Rank loss margin.')
-    parser.add_argument('--num_train_epochs', default=30, type=int,
+    parser.add_argument('--num_train_epochs', default=1, type=int,
                         help='Number of training epochs.')
-    parser.add_argument('--batch_size', default=32, type=int,
+    parser.add_argument('--batch_size', default=4, type=int,
                         help='Size of a training mini-batch.')
 
     parser.add_argument('--grad_clip', default=2., type=float,
@@ -214,9 +256,9 @@ def main():
                         help='Number of steps to run validation.')
 
     parser.add_argument("--scheduler", default='linear', type=str, help="constant or linear or")
-    parser.add_argument('--output_dir', default='/media/abhidip/2F1499756FA9B1151/SCAN_models/GOT/',
+    parser.add_argument('--output_dir', default='/media/abhidip/2F1499756FA9B1151/QG/model/',
                         help='Path to save the model.')
-    parser.add_argument('--logger_name', default='/media/abhidip/2F1499756FA9B1151/SCAN_models/GOT/log', help='Path to save Tensorboard log.')
+    parser.add_argument('--logger_name', default='/media/abhidip/2F1499756FA9B1151/QG/log', help='Path to save Tensorboard log.')
     parser.add_argument('--resume', default='', type=str, metavar='PATH',help='path to latest checkpoint (default: none)')
 
     parser.add_argument('--logging_steps', type=int, default=20, help="Log every X steps.")
@@ -231,9 +273,9 @@ def main():
                         help="The maximum sequence length for decoder.")
     parser.add_argument("--max_target_length", default=128, type=int,
                         help="The maximum sequence length for generation.")
-
-    parser.add_argument("--weight_decay", default=0.05, type=float, help="Weight deay.")
-
+    parser.add_argument('--seed', type=int, default=88, help="random seed for initialization.")
+    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
+    parser.add_argument('--task', default="ask_question",help='ask_question|ask_answer|both')
 
     args = parser.parse_args()
     local_rank = ensure_init_process_group(local_rank=args.local_rank)
@@ -245,11 +287,25 @@ def main():
 
     set_seed(args.seed, args.num_gpus)
 
+
+    logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
+    tb_logger.configure(args.logger_name, flush_secs=5)
+
     checkpoint = args.model_name_or_path
     #config = BartConfig.from_pretrained(checkpoint)
     tokenizer = BartTokenizer.from_pretrained(checkpoint)
-    logger.info("Evaluate the following checkpoint: %s", checkpoint)
+    logging.info("Evaluate the following checkpoint: %s", checkpoint)
     model = load_checkpoint(checkpoint, args)#checkpoint, config=config)
+    print("b4====config v_size:{} model_vsize:{}".format(model.bart.config.vocab_size, model.bart.model.shared.num_embeddings))
+    if model.bart.config.vocab_size == 50265 and model.bart.model.shared.num_embeddings==50265:
+        additional_special_tokens = ["ask_question:", "ask_answer:", "context:", "attribute:", "query:", "both:" ]
+        special_tokens_dict = {'additional_special_tokens': additional_special_tokens}
+        num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
+        desired_vsize = model.bart.model.shared.num_embeddings + num_added_toks
+        model.bart.config.vocab_size = desired_vsize
+        model.bart.resize_token_embeddings(desired_vsize)
+
+    print("config v_size:{} model_vsize:{}".format(model.bart.config.vocab_size, model.bart.model.shared.num_embeddings))
     model.to(args.device)
 
     if args.do_train:
@@ -257,3 +313,7 @@ def main():
             args.distributed, is_train=True)
         last_checkpoint = train(args, train_dataloader, model, tokenizer)
         print("training done. Last chkpt {}".format(last_checkpoint))
+
+
+if __name__ == "__main__":
+    main()

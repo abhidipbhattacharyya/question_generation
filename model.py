@@ -1,38 +1,11 @@
 import torch.nn as nn
 import torch
-from transformers import *
+from transformers import BartForConditionalGeneration
+
+
 #from torchcrf import CRF
 
-def save_checkpoint(model, tokenizer, args, epoch, iteration, num_trial=10):
-    checkpoint_dir = op.join(args.output_dir, 'checkpoint-{}-{}'.format(
-        epoch, iteration))
-    if not is_main_process():
-        return checkpoint_dir
-    mkdir(checkpoint_dir)
-    model_to_save = model.module if hasattr(model, 'module') else model
-    bart = model_to_save.bart
-    for i in range(num_trial):
-        try:
-            bart.save_pretrained(checkpoint_dir)
-            torch.save(args, op.join(checkpoint_dir, 'training_args.bin'))
-            tokenizer.save_pretrained(checkpoint_dir)
-            logger.info("Save checkpoint to {}".format(checkpoint_dir))
-            break
-        except:
-            pass
-    else:
-        logger.info("Failed to save checkpoint after {} trails.".format(num_trial))
-    return checkpoint_dir
 
-def load_checkpoint(checkpoint, args, logger=None):
-    #checkpoint = args.eval_model_dir
-    assert op.isdir(checkpoint)
-        #config = config_class.from_pretrained(checkpoint)
-        #config.output_hidden_states = args.output_hidden_states
-        #self.tokenizer = BertTokenizer.from_pretrained(checkpoint)
-        #logger.info("Evaluate the following checkpoint: %s", checkpoint)
-    bart_QG = BART_QG(checkpoint, args)
-    return bart_QG
 
 class BART_QG(nn.Module):
     def __init__(self,config, args):

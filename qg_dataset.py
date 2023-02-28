@@ -22,8 +22,8 @@ def clean_source_text(raw_text):
     clean_text = raw_text.replace('\n',' ').replace('\r',' ').replace('\t',' ').replace('\s',' ').replace('\t+',' ').replace('\s+',' ').lower().strip(' .') + ' .'
     return clean_text
 
-def extract_section_text_for_row(fairytale_row):
-    source_texts_df = pd.read_csv(source_texts)
+def extract_section_text_for_row(fairytale_row, source_texts_df):
+    #source_texts_df = pd.read_csv(source_texts)
     title = fairytale_row['source_title']
     #print(fairytale_row['cor_section'])
     sections = str(fairytale_row['cor_section']).split(",")
@@ -95,16 +95,16 @@ class QGTensorizer(object):
     ''' to tensorize the inputs'''
     def __init__(self,tokenizer, max_encoder_input_length = 1024, max_decoder_input_length = 128, max_target_length = 128):
         self.tokenizer = tokenizer
-        self. max_encoder_input_length =  max_encoder_input_length
+        self.max_encoder_input_length =  max_encoder_input_length
         self.max_decoder_input_length = max_decoder_input_length
         self.max_target_length = max_target_length
 
     def tensorize_example(self, en_txt, de_txt, tar_txt = None):
-        en_ids = self.tokenizer(en_txt,  return_tensors='pt',max_length= self. max_encoder_input_length, truncation=True, pad_to_max_length=True)
-        de_ids = self.tokenizer(de_txt,  return_tensors='pt',max_length= self. max_decoder_input_length, truncation=True, pad_to_max_length=True)
+        en_ids = self.tokenizer(en_txt,  return_tensors='pt',max_length= self.max_encoder_input_length, truncation=True, pad_to_max_length=True)
+        de_ids = self.tokenizer(de_txt,  return_tensors='pt',max_length= self.max_decoder_input_length, truncation=True, pad_to_max_length=True)
         tar_ids = None
         if tar_txt:
-            tar_ids = self.tokenizer(tar_txt,  return_tensors='pt',max_length= self. max_decoder_input_length, truncation=True, pad_to_max_length=True)
+            tar_ids = self.tokenizer(tar_txt,  return_tensors='pt',max_length= self.max_decoder_input_length, truncation=True, pad_to_max_length=True)
 
         return en_ids, de_ids, tar_ids
 
@@ -118,9 +118,11 @@ class fairytale_dataset(Dataset):
         self.istraining = istraining
         self.task = task
         self.tensorizer = QGTensorizer(tokenizer, max_encoder_input_length, max_decoder_input_length, max_target_length)
+        source_texts_df = pd.read_csv(source_texts)
+        print("self.istraining:{}".format(self.istraining))
         for ind in df.index:
             data_i = {k:df[k][ind] for k in cols}
-            data_i = extract_section_text_for_row(data_i)
+            data_i = extract_section_text_for_row(data_i, source_texts_df)
             data_i = format_encoder_text_for_bart(data_i, self.task)
             data_i = format_decoder_text_for_bart(data_i, self.task)
             data_i = format_output_text_for_bart(data_i, self.task)
@@ -135,6 +137,8 @@ class fairytale_dataset(Dataset):
             tar_txt = data_item["output_text"]
         else:
             tar_txt = None
+
+        #print([data_item["input_text"],data_item['decoder_text'], tar_txt])
         en_ids, de_ids, tar_ids=self.tensorizer.tensorize_example(data_item["input_text"],data_item['decoder_text'], tar_txt = tar_txt)
         encoder_id = en_ids['input_ids'].squeeze(0)
         encoder_att = en_ids['attention_mask'].squeeze(0)
@@ -147,7 +151,7 @@ class fairytale_dataset(Dataset):
         eitem = {'encoder_id':encoder_id,
                 'encoder_attention_mask':encoder_att,
                 'decoder_id':decoder_id,
-                'decoder_attention_mask':None,#think about it
+                #'decoder_attention_mask':None,#think about it
                 'target_id':target_id
                 }
         return eitem
@@ -156,7 +160,7 @@ class fairytale_dataset(Dataset):
         encoder_ids = []
         encoder_attention_masks = []
         decoder_ids = []
-        target_ids = None
+        target_ids = []
         if self.istraining:
             target_ids = []
 
@@ -188,12 +192,21 @@ def build_dataset(args,  tokenizer, is_train=True):
                 istraining=is_train,
                 max_encoder_input_length = args.max_encoder_input_length,
                 max_decoder_input_length = args.max_decoder_input_length,
-                max_target_length = args.max_target_length)
+                max_target_length = args.max_target_length,
+                task = args.task)
     return dataset
 
 if __name__ == '__main__':
     tokenizer = BartTokenizer.from_pretrained("facebook/bart-base")
-    dataset = fairytale_dataset(args.csv_file', tokenizer=tokenizer, max_encoder_input_length = 1024, max_decoder_input_length = 128, max_target_length = 128, story_file=None, task = "ask_question")
+    dataset = fairytale_dataset(train_path,
+        tokenizer=tokenizer,
+        max_encoder_input_length = 1024,
+        max_decoder_input_length = 128,
+        max_target_length = 128,
+        story_file=None,
+        task = "ask_question"
+    )
+    #print(dataset[0])
     loader = DataLoader(
         dataset, batch_size=2,
         collate_fn=dataset.collate_fn,

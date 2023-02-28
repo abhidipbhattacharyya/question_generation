@@ -1,3 +1,5 @@
+import os
+import os.path as op
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
@@ -54,3 +56,14 @@ class LogCollector(object):
         """
         for k, v in self.meters.items():
             tb_logger.log_value(prefix + k, v.val, step=step)
+
+
+def mkdir(path):
+    # if it is the current folder, skip.
+    if path == '':
+        return
+    try:
+        os.makedirs(path)
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise
