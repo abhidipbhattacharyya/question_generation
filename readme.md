@@ -1,3 +1,4 @@
+## Question Generation Task for FairyTale Dataset
 ## conda install
 ```
 conda create --name fairytale python=3.10.8
@@ -7,29 +8,27 @@ pip install scikit-learn
 pip install tensorboard_logger
 pip install pandas
 ```
-## Question Generation Task for FairyTale Dataset
-### run the training over 2 gpus
 
-on ego server
+### run the training over 2 gpus
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 run_QG.py \
-    --model_name_or_path /data/abhidip/QG_data/experiments/model/bart-base/ \
+python -m torch.distributed.launch --nproc_per_node=2 run_QG.py \
+    --model_name_or_path /media/abhidip/2F1499756FA9B1151/QG/model/bart-base/ \
     --do_train \
-    --csv_file /data/abhidip/QG_data/CU-stroy-QA-Data/train_split.csv \
+    --csv_file /media/abhidip/2F1499756FA9B1151/data/CU-stroy-QA-Data/train_split.csv \
     --num_train_epochs 50 \
     --save_steps 750 \
     --batch_size 4 \
-    --learning_rate 3e-4 \
+    --learning_rate 3e-5 \
     --task ask_question
 ```
-```
-CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 run_QG.py --do_train --model_name_or_path /data/abhidip/QG_data/experiments/model/bart-base/ --csv_file /data/abhidip/QG_data/CU-stroy-QA-Data/train_split.csv --num_train_epochs 50 --save_steps 750 --batch_size 4 --learning_rate 3e-4 --task ask_question
-```
+
 ### Inference
-
 ```bash
-CUDA_VISIBLE_DEVICES=2 python run_QG.py --do_test --csv_file /data/abhidip/QG_data/CU-stroy-QA-Data/test_split.csv --task ask_question --model_name_or_path /data/abhidip/QG_data/experiments/model/
+python run_QG.py \
+    --do_test \
+    --model_name_or_path /media/abhidip/2F1499756FA9B1151/QG/model/checkpoint-0-1500 \
+    --csv_file /media/abhidip/2F1499756FA9B1151/data/CU-stroy-QA-Data/test_split.csv \
+    --task ask_question
 ```
-
 
 ### evaluation
