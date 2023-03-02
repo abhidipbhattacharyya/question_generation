@@ -240,7 +240,7 @@ def generate_output_sequences_for_comp_data(model, data_loader, predict_file, to
                 decoder_ids=batch.decoder_ids.to(args.device)
                 target_ids=batch.target_ids.to(args.device)
                 encoded_op = model.generate(encoder_ids,attention_mask=encoder_attention_masks,decoder_input_ids=decoder_ids)
-                decoded_outputs = tokenizer.batch_decode(encoded_op, skip_special_tokens=True)
+                decoded_outputs = tokenizer.batch_decode(encoded_op, skip_special_tokens=False)
 
                 for pair_id, dec_op in zip(pair_ids, decoded_outputs):
                     if isinstance(pair_id, torch.Tensor):
@@ -274,7 +274,7 @@ def main():
 
     parser.add_argument('--margin', default=0.2, type=float,
                         help='Rank loss margin.')
-    parser.add_argument('--num_train_epochs', default=1, type=int,
+    parser.add_argument('--num_train_epochs', default=30, type=int,
                         help='Number of training epochs.')
     parser.add_argument('--batch_size', default=4, type=int,
                         help='Size of a training mini-batch.')
@@ -301,7 +301,7 @@ def main():
     parser.add_argument('--logger_name', default='/media/abhidip/2F1499756FA9B1151/QG/log', help='Path to save Tensorboard log.')
     parser.add_argument('--resume', default='', type=str, metavar='PATH',help='path to latest checkpoint (default: none)')
 
-    parser.add_argument('--logging_steps', type=int, default=20, help="Log every X steps.")
+    parser.add_argument('--logging_steps', type=int, default=200, help="Log every X steps.")
     parser.add_argument('--save_steps', type=int, default=-1,
                         help="Save checkpoint every X steps. Will also perform evaluation.")
     parser.add_argument("--local_rank", type=int, default=0,
@@ -340,7 +340,8 @@ def main():
     model = load_checkpoint(checkpoint, args)#checkpoint, config=config)
     print("b4====config v_size:{} model_vsize:{}".format(model.bart.config.vocab_size, model.bart.model.shared.num_embeddings))
     if model.bart.config.vocab_size == 50265 and model.bart.model.shared.num_embeddings==50265:
-        additional_special_tokens = ["ask_question:", "ask_answer:", "context:", "attribute:", "query:", "both:" ]
+        attribute_tok = ["action:", "prediction:", "feeling:", "outcome resolution:", "character:", "causal relationship:", "setting:"]
+        additional_special_tokens = ["ask_question:", "ask_answer:", "context:", "attribute:", "answer:", "question:", "both:" ]+attribute_tok
         special_tokens_dict = {'additional_special_tokens': additional_special_tokens}
         num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
         desired_vsize = model.bart.model.shared.num_embeddings + num_added_toks
@@ -357,6 +358,7 @@ def main():
         print("training done. Last chkpt {}".format(last_checkpoint))
 
     elif args.do_test:
+        print("calling this")
         test_dataloader = make_data_loader(args, args.csv_file, tokenizer,
             args.distributed, is_train=False)
         generate_output_sequences_for_comp_data(model, test_dataloader, args.predict_file, tokenizer, args = args)

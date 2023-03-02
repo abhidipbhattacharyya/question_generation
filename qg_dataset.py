@@ -62,22 +62,22 @@ def format_decoder_text_for_bart(example, task = "ask_question"):
         attribute = example['attribute']
 
     if task == "ask_question":
-        decoder_text = "attribute:{} query:{}".format(attribute, example["answer"])
+        decoder_text = "</s><s>{}: answer: {}".format(attribute, example["answer"])
     elif task == "ask_answer":
-        decoder_text = "attribute:{} query:{}".format(attribute, example["question"])
+        decoder_text = "</s><s>{}: question: {}".format(attribute, example["question"])
     else:
-        decoder_text = "attribute:{} query:<s>".format(attribute)
+        decoder_text = "</s><s>{}: ".format(attribute)
     example['decoder_text'] = decoder_text
     return example
 
 def format_output_text_for_bart(example, task = "ask_question"):
     '''creating the target.'''
     if task == "ask_question":
-        example["output_text"] = example["question"]
+        example["output_text"] = "question: {}</s>".format(example["question"])
     elif task == "ask_answer":
-        example["output_text"] = example["answer"]
+        example["output_text"] = "answer: {}</s>".format(example["answer"])
     else:
-        example["output_text"] =  example["question"]+" "+example["answer"]
+        example["output_text"] =  "question: "+ example["question"]+" "+ "answer: "+example["answer"]+"</s>"
 
     return example
 
@@ -101,11 +101,11 @@ class QGTensorizer(object):
         self.max_target_length = max_target_length
 
     def tensorize_example(self, en_txt, de_txt, tar_txt = None):
-        en_ids = self.tokenizer(en_txt,  return_tensors='pt',max_length= self.max_encoder_input_length, truncation=True, pad_to_max_length=True)
-        de_ids = self.tokenizer(de_txt,  return_tensors='pt',max_length= self.max_decoder_input_length, truncation=True, pad_to_max_length=True)
+        en_ids = self.tokenizer(en_txt,  return_tensors='pt',max_length= self.max_encoder_input_length, truncation=True, padding='max_length')
+        de_ids = self.tokenizer(de_txt,  return_tensors='pt',max_length= self.max_decoder_input_length, truncation=True, padding='max_length',add_special_tokens = False)
         tar_ids = None
         if tar_txt:
-            tar_ids = self.tokenizer(tar_txt,  return_tensors='pt',max_length= self.max_target_length, truncation=True, pad_to_max_length=True)
+            tar_ids = self.tokenizer(tar_txt,  return_tensors='pt',max_length= self.max_target_length, truncation=True, padding='max_length', add_special_tokens = False)
 
         return en_ids, de_ids, tar_ids
 
@@ -221,16 +221,18 @@ if __name__ == '__main__':
         collate_fn=dataset.collate_fn,
         pin_memory=False
     )
+    print(len(dataset))
     for batch_idx, batch in enumerate(loader):
         encoder_ids= batch.encoder_ids
         encoder_attention_masks=batch.encoder_attention_masks
         decoder_ids=batch.decoder_ids
         target_ids=batch.target_ids
         print(batch.pair_ids)
-        print(encoder_ids.size())
-        print(encoder_attention_masks.size())
-        print(decoder_ids.size())
-        print(target_ids.size())
+        #print(encoder_ids.size())
+        #print(encoder_attention_masks.size())
+        print(decoder_ids)
+        print("--------------------------------")
+        print(target_ids)
         break
 
     #print(dataset[0])

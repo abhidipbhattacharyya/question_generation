@@ -22,8 +22,10 @@ class BART_QG(nn.Module):
         encoder_ids= input_ids
         encoder_attention_masks= attention_mask
         decoder_ids=decoder_input_ids
-        print(encoder_ids.size())
-        print(decoder_ids.size())
+        #print(encoder_ids.size())
+        #print(decoder_ids.size())
+        #print("hgere")
+        #print(self.bart.config.is_encoder_decoder)
         model_kwargs = {
             "encoder_outputs": self.bart.get_encoder()(
                 encoder_ids, attention_mask=encoder_attention_masks, return_dict=True
@@ -33,5 +35,8 @@ class BART_QG(nn.Module):
             "max_length":128,
         }
 
-        encoded_ids = self.bart.generate(num_beams=num_beams, do_sample=do_sample, **model_kwargs)
+        encoded_ids = self.bart.generate( num_beams=num_beams, do_sample=do_sample, **model_kwargs)
+
+        print("resturn seq {}".format(encoded_ids.size()))
+
         return encoded_ids
