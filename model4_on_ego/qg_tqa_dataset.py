@@ -24,29 +24,11 @@ def clean_source_text(raw_text):
     clean_text = raw_text.replace('\n',' ').replace('\r',' ').replace('\t',' ').replace('\s',' ').replace('\t+',' ').replace('\s+',' ').lower().strip(' .') + ' .'
     return clean_text
 
-def extract_section_text_for_row(fairytale_row, source_texts_df):
-    #source_texts_df = pd.read_csv(source_texts)
-    title = fairytale_row['source_title']
-    #print(fairytale_row['cor_section'])
-    sections = str(fairytale_row['cor_section']).split(",")
-    if len(sections) > 1:
-        # If multiple sections are available, combine their text and use as input
-        combined_section_text = ""
-        for s in sections:
-            # Make sure there are no whitespaces in the section
-            int_s = int(s.replace(" ", ""))
-            source_texts_row = source_texts_df.loc[(source_texts_df['source_title']==title) & (source_texts_df['cor_section'] == int_s)]
-            s_text = source_texts_row['text'].iloc[0]
-            combined_section_text = combined_section_text + " " + s_text
-        section_text = combined_section_text
-    else:
-        section = sections[0]
-        source_texts_row = source_texts_df.loc[(source_texts_df['source_title']==title) & (source_texts_df['cor_section']== int(section))]
-        source_text = source_texts_row['text'].iloc[0]
-        section_text = source_text
+def extract_section_text_for_row(tqa_row):
 
-    fairytale_row['section_text'] = clean_source_text(section_text)
-    return fairytale_row
+    section_text = tqa_row['context']
+    tqa_row['section_text'] = clean_source_text(section_text)
+    return tqa_row
 
 
 def format_encoder_text_for_bart(example, task = "ask_question"):
@@ -58,18 +40,15 @@ def format_encoder_text_for_bart(example, task = "ask_question"):
 
 def format_decoder_text_for_bart(example, task = "ask_question"):
     '''decoder text. it will have attribute and question or answer.'''
-    if 'attribute1' in example:
-        attribute = example['attribute1']
-    else:
-        attribute = example['attribute']
+
 
     if task == "ask_question":
-        decoder_text = "</s><s>{}: <a>{}</a> <q>".format(attribute, example["answer"])
+        decoder_text = "</s><s><a>{}</a> <q>".format(example["answer"])
     elif task == "ask_answer":
-        decoder_text = "</s><s>{}: <q>{}</q> <a>".format(attribute, example["question"])
+        decoder_text = "</s><s><q>{}</q> <a>".format(example["question"])
     else:
-        decoder_text = "</s><s>{}: <q>".format(attribute)
-        decoder_text = "</s><s>{}: <a>{}</a> <q>".format(attribute, example["answer"])#temporary
+        decoder_text = "</s><s><q>"#.format(attribute)
+        #decoder_text = "</s><s><a>{}</a> <q>".format(example["answer"])#temporary
         #decoder_text = "</s><s>{}: <q>{}</q> <a>".format(attribute, example["question"])#temporary
     example['decoder_text'] = decoder_text
     return example
@@ -77,15 +56,15 @@ def format_decoder_text_for_bart(example, task = "ask_question"):
 def format_output_text_for_bart(example, task = "ask_question"):
     '''creating the target.'''
     if task == "ask_question":
-        example["output_text"] = "<s>{}: <a>{}</a> <q>{}</q></s>".format(example['attribute1'],example["answer"],example["question"])
+        example["output_text"] = "<s><a>{}</a> <q>{}</q></s>".format(example["answer"],example["question"])
     elif task == "ask_answer":
-        example["output_text"] = "<s>{}: <q>{}</q> <a>{}</a></s>".format(example['attribute1'],example["question"],example["answer"])
+        example["output_text"] = "<s><q>{}</q> <a>{}</a></s>".format(example["question"],example["answer"])
     else:
         random.seed()
         if random.random()>0.5:
-            example["output_text"] = "<s>{}: <q>{}</q> <a>{}</a></s>".format(example['attribute1'],example["question"],example["answer"])#"<s>"+ example['attribute1']+": question: "+ example["question"]+" "+ "answer: "+example["answer"]+"</s>"
+            example["output_text"] = "<s><q>{}</q> <a>{}</a></s>".format(example["question"],example["answer"])#"<s>"+ example['attribute1']+": question: "+ example["question"]+" "+ "answer: "+example["answer"]+"</s>"
         else:
-            example["output_text"] =  "<s>{}: <a>{}</a> <q>{}</q></s>".format(example['attribute1'],example["answer"],example["question"])#"<s>"+ example['attribute1']+": answer: "+ example["answer"]+" "+ "question: "+example["question"]+"</s>"
+            example["output_text"] = "<s><a>{}</a> <q>{}</q></s>".format(example["answer"],example["question"])#"<s>"+ example['attribute1']+": answer: "+ example["answer"]+" "+ "question: "+example["question"]+"</s>"
     return example
 
 
@@ -121,7 +100,7 @@ class QGTensorizer(object):
         return en_ids, de_ids, tar_ids
 
 ''' dataset with collate_fn'''
-class fairytale_dataset(Dataset):
+class tqa_dataset(Dataset):
     def __init__(self,csv_file, tokenizer=None, istraining=True, max_encoder_input_length = 1024, max_decoder_input_length = 128, max_target_length = 128, story_file=None, task = "ask_question"):
         df = pd.read_csv(csv_file)
         cols = list(df.columns)
@@ -137,7 +116,7 @@ class fairytale_dataset(Dataset):
         self.mtil = max_target_length
         for ind in df.index:
             data_i = {k:df[k][ind] for k in cols}
-            data_i = extract_section_text_for_row(data_i, source_texts_df)
+            data_i = extract_section_text_for_row(data_i)
             data_i = format_encoder_text_for_bart(data_i, self.task)
             data_i = format_decoder_text_for_bart(data_i, self.task)
             #data_i = format_output_text_for_bart(data_i, self.task)
@@ -256,7 +235,7 @@ class fairytale_dataset(Dataset):
 
 '''
 def build_dataset(args,  tokenizer, is_train=True):
-    dataset = fairytale_dataset(args.csv_file,
+    dataset = tqa_dataset(args.csv_file,
                 tokenizer=tokenizer,
                 istraining=is_train,
                 max_encoder_input_length = args.max_encoder_input_length,
@@ -267,7 +246,7 @@ def build_dataset(args,  tokenizer, is_train=True):
 
 if __name__ == '__main__':
     tokenizer = BartTokenizer.from_pretrained("/media/abhidip/2F1499756FA9B1151/QG/model/bart-base/")
-    dataset = fairytale_dataset(train_path,
+    dataset = tqa_dataset(train_path,
         tokenizer=tokenizer,
         max_encoder_input_length = 1024,
         max_decoder_input_length = 128,

@@ -64,12 +64,12 @@ def format_decoder_text_for_bart(example, task = "ask_question"):
         attribute = example['attribute']
 
     if task == "ask_question":
-        decoder_text = "</s><s>{}: <a>{}</a> <q>".format(attribute, example["answer"])
+        decoder_text = "</s><s><a>{}</a> <q>".format(example["answer"])
     elif task == "ask_answer":
-        decoder_text = "</s><s>{}: <q>{}</q> <a>".format(attribute, example["question"])
+        decoder_text = "</s><s><q>{}</q> <a>".format(example["question"])
     else:
-        decoder_text = "</s><s>{}: <q>".format(attribute)
-        decoder_text = "</s><s>{}: <a>{}</a> <q>".format(attribute, example["answer"])#temporary
+        decoder_text = "</s><s><q>"
+        #decoder_text = "</s><s><a>{}</a> <q>".format(example["answer"])#temporary
         #decoder_text = "</s><s>{}: <q>{}</q> <a>".format(attribute, example["question"])#temporary
     example['decoder_text'] = decoder_text
     return example
@@ -77,15 +77,15 @@ def format_decoder_text_for_bart(example, task = "ask_question"):
 def format_output_text_for_bart(example, task = "ask_question"):
     '''creating the target.'''
     if task == "ask_question":
-        example["output_text"] = "<s>{}: <a>{}</a> <q>{}</q></s>".format(example['attribute1'],example["answer"],example["question"])
+        example["output_text"] = "<s><a>{}</a> <q>{}</q></s>".format(example["answer"],example["question"])
     elif task == "ask_answer":
-        example["output_text"] = "<s>{}: <q>{}</q> <a>{}</a></s>".format(example['attribute1'],example["question"],example["answer"])
+        example["output_text"] = "<s><q>{}</q> <a>{}</a></s>".format(example["question"],example["answer"])
     else:
         random.seed()
         if random.random()>0.5:
-            example["output_text"] = "<s>{}: <q>{}</q> <a>{}</a></s>".format(example['attribute1'],example["question"],example["answer"])#"<s>"+ example['attribute1']+": question: "+ example["question"]+" "+ "answer: "+example["answer"]+"</s>"
+            example["output_text"] = "<s><q>{}</q> <a>{}</a></s>".format(example["question"],example["answer"])#"<s>"+ example['attribute1']+": question: "+ example["question"]+" "+ "answer: "+example["answer"]+"</s>"
         else:
-            example["output_text"] =  "<s>{}: <a>{}</a> <q>{}</q></s>".format(example['attribute1'],example["answer"],example["question"])#"<s>"+ example['attribute1']+": answer: "+ example["answer"]+" "+ "question: "+example["question"]+"</s>"
+            example["output_text"] =  "<s><a>{}</a> <q>{}</q></s>".format(example["answer"],example["question"])#"<s>"+ example['attribute1']+": answer: "+ example["answer"]+" "+ "question: "+example["question"]+"</s>"
     return example
 
 
